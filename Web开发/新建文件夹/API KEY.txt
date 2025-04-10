@@ -1,0 +1,6 @@
+DP：sk-307f418680034652a0849df521c12f79
+
+OPENAI_API_KEY=AIzaSyBx4idSkMiemZcR4jPifk9oZSlNn0Zq8tM
+GEMINI_API_KEY=AIzaSyBx4idSkMiemZcR4jPifk9oZSlNn0Zq8tM
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+OPENAI_MODEL_NAME=gemini-2.0-flash
