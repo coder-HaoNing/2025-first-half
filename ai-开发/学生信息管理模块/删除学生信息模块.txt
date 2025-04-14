@@ -1,0 +1,46 @@
+在该项目已有部分的基础下，请帮我设计一个删除学生作业信息模块的接口文件，严格按照下列要求：
+
+1.删除学生作业信息模块接口文档如下：
+### 删除学生及其所有作业记录**
+
+#### **基本信息**
+
+- **请求路径**: `/students/{student_id}`
+- **请求方式**: DELETE
+- **接口描述**: 删除学生信息及其关联的所有作业记录
+
+#### **响应数据**
+
+```json
+{
+    "code": 1,
+    "msg": "学生信息删除成功",
+    "data": null
+}
+```
+
+**级联逻辑**：删除学生时，数据库自动删除其关联的作业记录（通过外键级联实现）。
+
+------
+
+2.数据表结构如下
+	2.1-- 学生信息表（student_info）
+		CREATE TABLE student_info (
+		    student_id VARCHAR(20) PRIMARY KEY COMMENT '学生学号（主键）',
+		    student_name VARCHAR(50) NOT NULL COMMENT '学生姓名',
+		    gender ENUM('男', '女') NOT NULL COMMENT '性别'
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生基本信息表';
+	2.2-- 作业信息表（homework_info）
+		CREATE TABLE homework_info (
+		    student_id VARCHAR(20) NOT NULL COMMENT '学生学号（外键）',
+		    homework_order INT UNSIGNED NOT NULL COMMENT '作业次序（数字，如0、1、2等）',
+		    homework_image_path VARCHAR(255) NOT NULL COMMENT '作业图片存储路径',
+		    score DECIMAL(5,2) COMMENT '得分（后台评分，允许为空）',
+		    comment TEXT COMMENT '评语（后台评语，允许为空）',
+		    -- 复合主键：学生学号 + 作业次序，确保同一学生不同作业次序唯一
+		    PRIMARY KEY (student_id, homework_order),
+		    -- 外键约束，关联学生信息表+级联删除
+		    FOREIGN KEY (student_id) REFERENCES student_info(student_id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生作业信息表';
+
+3.结合已有的db_utils.py，api.py进行功能扩展

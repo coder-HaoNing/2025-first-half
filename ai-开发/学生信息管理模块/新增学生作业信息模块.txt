@@ -1,0 +1,232 @@
+请帮我设计一个新增学生作业信息模块的接口文件，基于python和openai模块，严格按照下列要求：
+1.希望严格根据下面代码格式来写：
+	import base64
+	import json
+	import os
+	import pathlib
+	import random
+	import time
+	from collections.abc import Generator, Iterable
+	from typing import Self
+
+	import dotenv
+	import jinja2
+	from openai import OpenAI
+	from openai.types.chat import (
+	    ChatCompletionContentPartParam,
+	    ChatCompletionUserMessageParam,
+	)
+
+	dotenv.load_dotenv()
+
+	client = OpenAI(
+	    api_key=os.environ["OPENAI_API_KEY"],
+	    base_url=os.environ["OPENAI_BASE_URL"],
+	)
+	model_name = os.environ["OPENAI_MODEL_NAME"]
+	assets_dir = pathlib.Path("assets")
+	output_dir = pathlib.Path("output")
+	if not output_dir.exists():
+	    output_dir.mkdir()
+
+
+	class CompletionMessage:
+	    content: list[ChatCompletionContentPartParam]
+
+	    def __init__(self) -> None:
+	        self.content = []
+
+	    def text(self, text: str) -> Self:
+	        self.content.append({"type": "text", "text": text})
+	        return self
+
+	    def image(self, image_url: str) -> Self:
+	        self.content.append(
+	            {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}}
+	        )
+	        return self
+
+	    def images(self, image_urls: Iterable[str]) -> Self:
+	        for url in image_urls:
+	            self.image(url)
+	        return self
+
+	    def build(self) -> ChatCompletionUserMessageParam:
+	        return {"role": "user", "content": self.content}
+
+
+	def load_images() -> Generator[str]:
+	    image_dir = assets_dir / "images"
+	    for fp in image_dir.iterdir():
+	        if fp.is_dir():
+	            continue
+	        raw = fp.read_bytes()
+	        encoded = base64.b64encode(raw).decode("utf-8")
+	        yield f"data:image/png;base64,{encoded}"
+
+
+	def generate_teaching_plan(grade: str) -> str:
+	    prompt = (assets_dir / "prompt.md").read_text("utf-8")
+	    response = client.chat.completions.create(
+	        model=model_name,
+	        messages=[
+	            CompletionMessage()
+	            .text(prompt.replace("{{grade}}", grade))
+	            .images(load_images())
+	            .build()
+	        ],
+	    )
+	    return response.choices[0].message.content or ""
+
+
+	def convert_json(content: str):
+	    prompt = (assets_dir / "prompt-convert-json.md").read_text("utf-8")
+	    response = client.chat.completions.create(
+	        model=model_name,
+	        messages=[
+	            CompletionMessage().text(prompt.replace("{{content}}", content)).build()
+	        ],
+	    )
+	    output = response.choices[0].message.content or ""
+	    return output[output.find("{") : output.rfind("}") + 1]
+
+
+	def render_document(data: dict[str, object]):
+	    data["enumerate"] = lambda it: enumerate(it, 1)
+	    data["paraId"] = lambda: "".join(random.choices("0123456789ABCDEF", k=8))
+	    template_file = assets_dir / "document.xml.jinja2"
+	    template: jinja2.Template = jinja2.Template(template_file.read_text("utf-8"))
+	    return template.render(data)
+
+
+	def pack_docx(document: str, output_file: pathlib.Path):
+	    import zipfile
+
+	    with zipfile.ZipFile(output_file, "w") as docx:
+	        docx.writestr("word/document.xml", document)
+	        root = assets_dir / "template"
+	        for file in root.glob("**/*"):
+	            if file.is_file() and file.name != "document.xml":
+	                docx.write(file, file.relative_to(root))
+
+
+	def main():
+	    now = time.strftime("%Y-%m-%d-%H-%M-%S")
+
+	    start = time.time()
+	    teaching_plan = generate_teaching_plan("七")
+	    end = time.time()
+	    print(f"Teaching plan generated, time elapsed: {end - start:.2f}s")
+	    output_file = output_dir / f"{now}.md"
+	    output_file.write_text(teaching_plan, "utf-8")
+	    print(f"Teaching plan saved as {output_file.relative_to(pathlib.Path())}")
+
+	    start = time.time()
+	    converted_json = convert_json(teaching_plan)
+	    end = time.time()
+	    print(f"JSON converted, time elapsed: {end - start:.2f}s")
+	    output_file = output_dir / f"{now}.json"
+	    output_file.write_text(converted_json)
+	    print(f"JSON saved as {output_file.relative_to(pathlib.Path())}")
+
+	    start = time.time()
+	    data = json.loads(converted_json)
+	    document = render_document(data)
+	    output_file = output_dir / f"{now}.docx"
+	    pack_docx(document, output_file)
+	    end = time.time()
+	    print(f"Document packed, time elapsed: {end - start:.2f}s")
+	    print(f"Document saved as {output_file.relative_to(pathlib.Path())}")
+
+
+	if __name__ == "__main__":
+	    main()
+
+2.新增学生作业信息模块接口文档如下：
+
+#### **基本信息**
+
+- **请求路径**: `/students/assignments`
+- **请求方式**: POST
+- **接口描述**: 提交学生信息和作业信息，若学生不存在则自动创建，并调用AI生成评分和评语
+
+#### **请求参数（表单格式）**
+
+| 参数名           | 类型   | 是否必须 | 示例      | 备注                         |
+| :--------------- | :----- | :------- | :-------- | :--------------------------- |
+| `student_id`     | string | 是       | S001      | 学号（唯一标识）             |
+| `student_name`   | string | 是       | 张三      | 学生姓名                     |
+| `gender`         | string | 是       | 男        | 性别（男/女）                |
+| `homework_order` | string | 是       | 第1次作业 | 格式为“第N次作业”（N为数字） |
+| `homework_image` | file   | 是       | -         | 作业图片文件（支持 PNG/JPG） |
+
+#### **响应数据**
+
+```json
+{
+    "code": 1,
+    "msg": "学生作业信息添加成功",
+    "data": {
+        "student_info": {
+            "student_id": "S001",
+            "student_name": "张三",
+            "gender": "男"
+        },
+        "homework_info": {
+            "homework_order": 1,
+            "homework_image_path": "/images/S001_1.png",
+            "score": 90.5,          // AI自动生成的评分
+            "comment": "作业完成优秀" // AI自动生成的评语
+        }
+    }
+}
+```
+
+**处理逻辑**：
+
+1. **校验学号唯一性**：
+   - 若学号已存在，直接添加作业记录（需校验作业次序唯一性）。
+   - 若学号不存在，自动创建学生记录。
+2. **校验字段格式**：
+   - `homework_order` 必须匹配“第N次作业”格式（提取数字N为 `homework_order` 字段值）。
+   - 图片文件类型限制为 PNG/JPG。
+3. **调用AI服务**：
+   - 图片上传后，调用AI生成评分和评语，存入作业表。
+
+**错误响应示例**：
+
+```json
+{
+    "code": 0,
+    "msg": "学号已存在且作业次序重复",
+    "data": null
+}
+```
+
+------
+
+## 
+
+3.MySQL数据库相关参数如下：
+	数据库名：stuwork,MySQL服务器地址:localhost,用户名：root,密码：nh@202312
+	连接数据库时请将数据库参数存于.env文件中，而不是直接写在主代码中
+	
+4.数据表结构如下
+	4.1-- 学生信息表（student_info）
+		CREATE TABLE student_info (
+		    student_id VARCHAR(20) PRIMARY KEY COMMENT '学生学号（主键）',
+		    student_name VARCHAR(50) NOT NULL COMMENT '学生姓名',
+		    gender ENUM('男', '女') NOT NULL COMMENT '性别'
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生基本信息表';
+	4.2-- 作业信息表（homework_info）
+		CREATE TABLE homework_info (
+		    student_id VARCHAR(20) NOT NULL COMMENT '学生学号（外键）',
+		    homework_order INT UNSIGNED NOT NULL COMMENT '作业次序（数字，如0、1、2等）',
+		    homework_image_path VARCHAR(255) NOT NULL COMMENT '作业图片存储路径',
+		    score DECIMAL(5,2) COMMENT '得分（后台评分，允许为空）',
+		    comment TEXT COMMENT '评语（后台评语，允许为空）',
+		    -- 复合主键：学生学号 + 作业次序，确保同一学生不同作业次序唯一
+		    PRIMARY KEY (student_id, homework_order),
+		    -- 外键约束，关联学生信息表+级联删除
+		    FOREIGN KEY (student_id) REFERENCES student_info(student_id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生作业信息表';

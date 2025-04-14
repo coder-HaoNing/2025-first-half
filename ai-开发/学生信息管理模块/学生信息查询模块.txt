@@ -1,0 +1,72 @@
+在该项目已有部分的基础下，请帮我设计一个新增学生作业信息模块的接口文件，严格按照下列要求：
+
+1.学生信息查询模块接口文档如下：
+### 根据姓名和性别查询学生列表（支持分页、排序）**
+
+#### **基本信息**
+
+- **请求路径**: `/students`
+- **请求方式**: GET
+- **接口描述**: 查询学生列表，支持按姓名模糊搜索、性别精确筛选，结果按作业次序升序排序
+
+#### **请求参数**
+
+| 参数名     | 类型   | 是否必须 | 示例 | 备注                    |
+| :--------- | :----- | :------- | :--- | :---------------------- |
+| `name`     | string | 否       | 张三 | 按学生姓名模糊查询      |
+| `gender`   | string | 否       | 男   | 按性别精确查询（男/女） |
+| `page`     | number | 否       | 1    | 分页页码，默认为1       |
+| `pageSize` | number | 否       | 10   | 每页记录数，默认为10    |
+
+#### **响应数据**
+
+```json
+{
+    "code": 1,
+    "msg": "success",
+    "data": {
+        "total": 100,
+        "rows": [
+            {
+                "student_id": "S001",
+                "student_name": "张三",
+                "gender": "男",
+                "homeworks": [
+                    {
+                        "homework_order": 1,
+                        "homework_image": "/images/S001_1.png",
+                        "score": 90.5,          // AI自动生成的评分
+                        "comment": "作业完成优秀" // AI自动生成的评语
+                    }
+                ]
+            }
+        ]
+    }
+}
+```
+
+**排序逻辑**：按学生最新作业的 `homework_order` 升序排列（若学生无作业，则排最后）。
+
+
+2.数据表结构如下
+	2.1-- 学生信息表（student_info）
+		CREATE TABLE student_info (
+		    student_id VARCHAR(20) PRIMARY KEY COMMENT '学生学号（主键）',
+		    student_name VARCHAR(50) NOT NULL COMMENT '学生姓名',
+		    gender ENUM('男', '女') NOT NULL COMMENT '性别'
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生基本信息表';
+	2.2-- 作业信息表（homework_info）
+		CREATE TABLE homework_info (
+		    student_id VARCHAR(20) NOT NULL COMMENT '学生学号（外键）',
+		    homework_order INT UNSIGNED NOT NULL COMMENT '作业次序（数字，如0、1、2等）',
+		    homework_image_path VARCHAR(255) NOT NULL COMMENT '作业图片存储路径',
+		    score DECIMAL(5,2) COMMENT '得分（后台评分，允许为空）',
+		    comment TEXT COMMENT '评语（后台评语，允许为空）',
+		    -- 复合主键：学生学号 + 作业次序，确保同一学生不同作业次序唯一
+		    PRIMARY KEY (student_id, homework_order),
+		    -- 外键约束，关联学生信息表+级联删除
+		    FOREIGN KEY (student_id) REFERENCES student_info(student_id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生作业信息表';
+
+
+3.结合已有的db_utils.py，api.py进行功能扩展

@@ -1,0 +1,184 @@
+请根据我的项目的结构和框架将提供的待修改代码进行修改，并且保证项目整体能够运行，严格按照下列要求：
+
+1.待修改代码
+from flask import Flask, request, jsonify, send_file
+from werkzeug.utils import secure_filename
+import os
+import pathlib
+import uuid
+import time
+from datetime import datetime, timedelta
+from PIL import Image
+from io import BytesIO
+import threading
+import shutil
+from openai_utils import CompletionMessage, encode_image, get_openai_client
+
+# 导入Gemini相关库
+from google import genai
+from google.genai import types
+
+app = Flask(__name__)
+
+# 文件目录配置
+assets_dir = pathlib.Path("assets")
+uploads_dir = assets_dir / "uploads"
+generated_dir = assets_dir / "generated"
+
+# 创建必要的目录
+uploads_dir.mkdir(parents=True, exist_ok=True)
+generated_dir.mkdir(parents=True, exist_ok=True)
+
+# 配置Gemini API
+try:
+    client = genai.Client(api_key=os.environ["OPENAI_API_KEY"])
+    GEMINI_MODEL = "gemini-2.0-flash-exp-image-generation"
+except Exception as e:
+    app.logger.error(f"Gemini API初始化失败: {str(e)}")
+
+def is_valid_image(file_path):
+    """验证文件是否为有效图片"""
+    try:
+        with Image.open(file_path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+# 用于存储最新生成的图片文件名
+last_generated_image_filename = None
+
+@app.route('/generate', methods=['POST'])
+def generate_styled_image():
+    """处理图片风格转换请求"""
+    global last_generated_image_filename
+    
+    # 获取请求参数
+    if 'file' not in request.files:
+        return jsonify(code=0, msg="未上传图片文件", data={"status": "failed"}), 400
+    
+    file = request.files['file']
+    style_prompt = request.form.get('stylePrompt', '')
+    
+    # 基础验证
+    if not file or file.filename == '':
+        return jsonify(code=0, msg="图片文件为空", data={"status": "failed"}), 400
+    
+    if not style_prompt:
+        return jsonify(code=0, msg="风格提示词不能为空", data={"status": "failed"}), 400
+    
+    # 保存上传文件
+    filename = secure_filename(file.filename)
+    if '.' not in filename:
+        return jsonify(code=0, msg="文件格式无效", data={"status": "failed"}), 400
+    
+    ext = filename.rsplit('.', 1)[1].lower()
+    if ext not in {"png", "jpg", "jpeg"}:
+        return jsonify(code=0, msg="仅支持PNG/JPG格式", data={"status": "failed"}), 400
+    
+    # 生成唯一文件名
+    unique_id = str(uuid.uuid4())
+    upload_filename = f"{unique_id}.{ext}"
+    upload_path = uploads_dir / upload_filename
+    
+    try:
+        file.save(upload_path)
+        
+        # 验证图片有效性
+        if not is_valid_image(upload_path):
+            upload_path.unlink()  # 删除无效文件
+            return jsonify(code=0, msg="上传的图片文件已损坏", data={"status": "failed"}), 400
+        
+        # 调用Gemini API生成风格化图片
+        try:
+            # 打开图片
+            image = Image.open(upload_path)
+            
+            # 构建提示词
+            text_input = f"请将这张图片转换为以下风格: {style_prompt}"
+            
+            # 调用Gemini API
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[text_input, image],
+                config=types.GenerateContentConfig(
+                    response_modalities=['Text', 'Image']
+                )
+            )
+            
+            # 处理响应
+            generated_image = None
+            response_text = ""
+            
+            for part in response.candidates[0].content.parts:
+                if part.text is not None:
+                    response_text = part.text
+                elif part.inline_data is not None:
+                    generated_image = Image.open(BytesIO(part.inline_data.data))
+            
+            if generated_image is None:
+                return jsonify(code=0, msg="AI生成图片失败", data={"status": "failed"}), 500
+            
+            # 保存生成的图片
+            output_filename = f"styled_{unique_id}.png"
+            output_path = generated_dir / output_filename
+            generated_image.save(output_path, format="PNG")
+            
+            # 更新最新生成图片文件名
+            last_generated_image_filename = output_filename
+            
+            # 构建直接访问的URL
+            result_url = "/generated"
+            
+            return jsonify(
+                code=1,
+                msg="生成成功",
+                data={
+                    "status": "completed",
+                    "resultUrl": result_url
+                }
+            )
+            
+        except Exception as e:
+            app.logger.error(f"AI处理失败: {str(e)}")
+            # 判断错误类型
+            if "timeout" in str(e).lower():
+                error_code = 1001
+                error_msg = "AI生成超时"
+            elif "style" in str(e).lower() or "prompt" in str(e).lower():
+                error_code = 1002
+                error_msg = "风格不支持或提示词无效"
+            else:
+                error_code = 0
+                error_msg = f"AI处理失败: {str(e)}"
+            
+            return jsonify(
+                code=error_code,
+                msg=error_msg,
+                data={"status": "failed"}
+            ), 500
+            
+    except Exception as e:
+        app.logger.error(f"处理请求失败: {str(e)}")
+        return jsonify(code=0, msg=f"处理请求失败: {str(e)}", data={"status": "failed"}), 500
+
+@app.route('/generated', methods=['GET'])
+def get_generated_image():
+    """获取最新生成的图片"""
+    if not last_generated_image_filename:
+        return jsonify(code=0, msg="没有生成的图片", data=None), 404
+    
+    file_path = generated_dir / last_generated_image_filename
+    if not file_path.exists():
+        return jsonify(code=0, msg="图片不存在或已过期", data=None), 404
+    
+    return send_file(file_path, mimetype='image/png')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5002)
+
+
+2.必须严格执行的要求:
+	2.1使用Python>=3.9的语法，禁止使用typing模块的List/Dict/Optional等类，直接使用list/dict/None用于类型标注
+	2.2为每个api端点定义pydantic返回值模型，与现有api风格保持一致
+	2.3考虑已有项目的结构，使生成的代码从结构和框架都完美融入已有项目

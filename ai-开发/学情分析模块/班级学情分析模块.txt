@@ -1,0 +1,68 @@
+在该项目已有部分的基础下，请帮我设计一个班级学情分析模块的接口文件，严格按照下列要求：
+
+1.班级学情分析接口文档如下：
+
+## 2. 班级学情查询
+
+### 2.1 基本信息
+
+- **请求路径**：`/class/analysis`
+- **请求方式**：GET
+- **接口描述**：查询班级全体学生的综合学情分析数据
+
+### 2.2 请求参数
+
+无
+
+### 2.3 响应数据
+
+参数格式：`application/json`
+
+| 参数名            | 类型     | 是否必须 | 备注                      |
+| :---------------- | :------- | :------- | :------------------------ |
+| code              | number   | 必须     | 响应码（1成功，0失败）    |
+| msg               | string   | 非必须   | 提示信息                  |
+| data              | object   | 必须     | 班级学情数据              |
+| !-classHeatmap    | object[] | 必须     | 班级知识点热力图          |
+| !--knowledge      | string   | 必须     | 知识点名称                |
+| !--averageMastery | number   | 必须     | 班级平均掌握程度（0-100） |
+| !-classAnalysis   | string   | 必须     | 班级综合学情分析结论      |
+
+响应示例：
+
+```json
+{
+    "code": 1,
+    "msg": "success",
+    "data": {
+        "classHeatmap": [
+            {"knowledge": "三角函数", "averageMastery": 78},
+            {"knowledge": "平面几何", "averageMastery": 65}
+        ],
+        "classAnalysis": "班级整体基础较好，但几何部分需重点讲解。"
+    }
+}
+```
+
+2.数据表结构如下
+	2.1-- 学生信息表（student_info）
+		CREATE TABLE student_info (
+		    student_id VARCHAR(20) PRIMARY KEY COMMENT '学生学号（主键）',
+		    student_name VARCHAR(50) NOT NULL COMMENT '学生姓名',
+		    gender ENUM('男', '女') NOT NULL COMMENT '性别'
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生基本信息表';
+	2.2-- 作业信息表（homework_info）
+		CREATE TABLE homework_info (
+		    student_id VARCHAR(20) NOT NULL COMMENT '学生学号（外键）',
+		    homework_order INT UNSIGNED NOT NULL COMMENT '作业次序（数字，如0、1、2等）',
+		    homework_image_path VARCHAR(255) NOT NULL COMMENT '作业图片存储路径',
+		    score DECIMAL(5,2) COMMENT '得分（后台评分，允许为空）',
+		    comment TEXT COMMENT '评语（后台评语，允许为空）',
+		    -- 复合主键：学生学号 + 作业次序，确保同一学生不同作业次序唯一
+		    PRIMARY KEY (student_id, homework_order),
+		    -- 外键约束，关联学生信息表+级联删除
+		    FOREIGN KEY (student_id) REFERENCES student_info(student_id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生作业信息表';
+
+
+3.结合已有的db_utils.py，api.py进行功能扩展
